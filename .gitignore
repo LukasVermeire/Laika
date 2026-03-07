@@ -1,0 +1,29 @@
+.idea
+.vscode
+__pycache__
+*.pyc
+*.pyo
+*.so
+
+# Packaging
+dist/
+build/
+*.egg-info/
+.eggs/
+
+# Environments
+.env
+.venv/
+env/
+
+# Artifacts
+wandb/
+examples/
+out/
+*.npz
+*.h5
+
+# OS
+.DS_Store
+
+scripts/
