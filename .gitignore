@@ -18,12 +18,9 @@ env/
 
 # Artifacts
 wandb/
-examples/
 out/
 *.npz
 *.h5
 
 # OS
 .DS_Store
-
-scripts/
