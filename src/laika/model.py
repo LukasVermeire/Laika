@@ -8,6 +8,7 @@ import torch
 import torch.nn as nn
 from loguru import logger
 
+from .cell_encoders.base import BaseCellEncoder
 from .heads import get_head
 from .heads.base import SpatialHead
 
@@ -27,6 +28,11 @@ class Laika(nn.Module):
         Dimensionality of spatial cell embedding.
     pool_factor
         Average pooling factor applied to trunk embeddings.
+    cell_encoder
+        Optional learnable cell encoder.  When provided, raw expression
+        vectors are encoded to cell embeddings on-the-fly, replacing
+        precomputed spatial embeddings.  The encoder's ``output_dim``
+        must equal ``spatial_emb_dim``.
     **head_kwargs
         Extra keyword arguments for get_head.
     """
@@ -38,6 +44,7 @@ class Laika(nn.Module):
         trunk_channels: int = 1536,
         spatial_emb_dim: int = 64,
         pool_factor: int = 8,
+        cell_encoder: BaseCellEncoder | None = None,
         **head_kwargs,
     ):
         super().__init__()
@@ -79,8 +86,19 @@ class Laika(nn.Module):
         )
         self.head = head_instance
 
+        # Optional learnable cell encoder
+        if cell_encoder is not None:
+            if cell_encoder.output_dim is not None and cell_encoder.output_dim != spatial_emb_dim:
+                raise ValueError(
+                    f"cell_encoder.output_dim ({cell_encoder.output_dim}) must match "
+                    f"spatial_emb_dim ({spatial_emb_dim}). Call encoder.setup() with the "
+                    "correct output_dim before passing it to Laika."
+                )
+        self.cell_encoder: BaseCellEncoder | None = cell_encoder
+
         n_params = sum(p.numel() for p in self.parameters())
-        logger.info(f"Laika model built: {n_params:,} parameters (head={self._head_name})")
+        encoder_info = f", encoder={cell_encoder.name}" if cell_encoder is not None else ""
+        logger.info(f"Laika model built: {n_params:,} parameters (head={self._head_name}{encoder_info})")
 
     @property
     def pool_factor(self) -> int:
@@ -108,20 +126,33 @@ class Laika(nn.Module):
         return self._spatial_emb_dim
 
     def forward(
-        self, trunk_emb: torch.Tensor, cell_embs: torch.Tensor
+        self,
+        trunk_emb: torch.Tensor,
+        cell_embs: torch.Tensor,
+        expression_vectors: torch.Tensor | None = None,
+        gene_encoder_idx: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Forward pass.
 
         Parameters
         ----------
         trunk_emb
-            (B, seq_len, channels) trunk embeddings.
+            ``(B, seq_len, channels)`` trunk embeddings.
         cell_embs
-            (B, N, emb_dim) spatial cell embeddings.
+            ``(B, N, emb_dim)`` spatial cell embeddings.  Used directly
+            when no cell encoder is present; otherwise serves as a
+            fallback if ``expression_vectors`` is ``None``.
+        expression_vectors
+            ``(B, N, n_encoder_genes)`` raw expression vectors.  Required
+            when a cell encoder is attached and should be used.
+        gene_encoder_idx
+            ``(B,)`` index of the target gene in the encoder vocabulary,
+            used for masking.  ``-1`` means no masking.
 
         Returns
         -------
-        (B, N) predictions.
+        torch.Tensor
+            ``(B, N)`` predictions.
         """
         if trunk_emb.shape[2] != self._trunk_channels:
             raise ValueError(
@@ -129,6 +160,10 @@ class Laika(nn.Module):
                 f"expected {self._trunk_channels}. "
                 "Check that trunk and model were built with the same trunk_channels."
             )
+
+        # Encode expression vectors when a cell encoder is present
+        if self.cell_encoder is not None and expression_vectors is not None:
+            cell_embs = self.cell_encoder(expression_vectors, gene_encoder_idx)
 
         if cell_embs.shape[2] != self._spatial_emb_dim:
             raise ValueError(
@@ -163,6 +198,14 @@ class Laika(nn.Module):
         """
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
+        cell_encoder_config = None
+        if self.cell_encoder is not None:
+            cell_encoder_config = {
+                "name": self.cell_encoder.name,
+                "kwargs": self.cell_encoder.config,
+                "output_dim": self.cell_encoder.output_dim,
+                "n_input_genes": getattr(self.cell_encoder, "_n_input_genes", None),
+            }
         checkpoint = {
             "state_dict": self.state_dict(),
             "config": {
@@ -172,6 +215,7 @@ class Laika(nn.Module):
                 "trunk_channels": self._trunk_channels,
                 "spatial_emb_dim": self._spatial_emb_dim,
                 "pool_factor": self._pool_factor,
+                "cell_encoder_config": cell_encoder_config,
             },
         }
         torch.save(checkpoint, path)
@@ -210,12 +254,23 @@ class Laika(nn.Module):
         if not isinstance(data, dict) or "config" not in data:
             raise ValueError(f"{path} has no config")
         cfg = data["config"]
+
+        # Reconstruct cell encoder if present in checkpoint (graceful for old checkpoints)
+        cell_encoder = None
+        enc_cfg = cfg.get("cell_encoder_config")
+        if enc_cfg is not None:
+            from .cell_encoders import get_cell_encoder
+            cell_encoder = get_cell_encoder(enc_cfg["name"], **enc_cfg["kwargs"])
+            if enc_cfg.get("n_input_genes") is not None:
+                cell_encoder.setup(enc_cfg["n_input_genes"], enc_cfg["output_dim"])
+
         model = cls(
             head=cfg["head"],
             trunk_seq_len=cfg["trunk_seq_len"],
             trunk_channels=cfg["trunk_channels"],
             spatial_emb_dim=cfg["spatial_emb_dim"],
             pool_factor=cfg["pool_factor"],
+            cell_encoder=cell_encoder,
             **cfg["head_config"],
         )
         model.load_state_dict(data["state_dict"])

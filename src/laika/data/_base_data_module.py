@@ -63,6 +63,7 @@ class BaseDataModule(ABC):
         max_stochastic_shift: int = 0,
         sequence_cache_in_memory: bool = True,
         sequence_cache_onehot: bool = True,
+        encoder_genes: list[str] | None = None,
     ):
         self.adata = adata
         self.genome = genome
@@ -75,6 +76,7 @@ class BaseDataModule(ABC):
         self.max_stochastic_shift = max_stochastic_shift
         self.sequence_cache_in_memory = sequence_cache_in_memory
         self.sequence_cache_onehot = sequence_cache_onehot
+        self._encoder_genes_requested = encoder_genes
 
         self._genes_requested = genes if genes is not None else list(adata.var_names)
         self._train_genes: list[str] | None = None
@@ -85,6 +87,10 @@ class BaseDataModule(ABC):
         self._gene_to_idx: dict[str, int] | None = None
         self._gene_means: np.ndarray | None = None
         self._gene_stds: np.ndarray | None = None
+
+        self._encoder_expression_matrix: np.ndarray | None = None
+        self._encoder_gene_to_idx: dict[str, int] | None = None
+        self._encoder_gene_names: list[str] | None = None
 
         self._is_setup = False
 
@@ -101,8 +107,28 @@ class BaseDataModule(ABC):
         genome: Genome,
         genes: list[str] | None,
         config: DataModuleConfig,
+        encoder_genes: list[str] | None = None,
     ):
-        """Build a data module from a typed config object."""
+        """Build a data module from a typed config object.
+
+        Parameters
+        ----------
+        adata
+            AnnData object.
+        genome
+            Genome instance.
+        genes
+            Target genes.
+        config
+            Data module config.
+        encoder_genes
+            Genes to use as cell encoder input.  Overrides
+            ``config.encoder_genes`` when provided.  ``None`` falls back
+            to ``config.encoder_genes``.
+        """
+        effective_encoder_genes = (
+            encoder_genes if encoder_genes is not None else config.encoder_genes
+        )
         return cls(
             adata=adata,
             genome=genome,
@@ -116,6 +142,7 @@ class BaseDataModule(ABC):
             max_stochastic_shift=config.max_stochastic_shift,
             sequence_cache_in_memory=config.sequence_cache_in_memory,
             sequence_cache_onehot=config.sequence_cache_onehot,
+            encoder_genes=effective_encoder_genes,
         )
 
     def to_config_dict(self, include_runtime: bool = True) -> dict[str, Any]:
@@ -216,6 +243,29 @@ class BaseDataModule(ABC):
             self.adata.obsm[self.spatial_emb_key], dtype=np.float32
         )
 
+        # Build cell encoder expression matrix when encoder genes are specified
+        if self._encoder_genes_requested is not None:
+            adata_gene_set = set(self.adata.var_names)
+            enc_genes = [g for g in self._encoder_genes_requested if g in adata_gene_set]
+            if not enc_genes:
+                logger.warning(
+                    "None of the requested encoder_genes found in adata.var_names; "
+                    "cell encoder data will not be available."
+                )
+            else:
+                enc_var_to_idx = {name: i for i, name in enumerate(self.adata.var_names)}
+                enc_adata_indices = [enc_var_to_idx[g] for g in enc_genes]
+                enc_expr = self.adata.X[:, enc_adata_indices]
+                if issparse(enc_expr):
+                    enc_expr = enc_expr.toarray()
+                self._encoder_expression_matrix = np.array(enc_expr, dtype=np.float32)  # (n_cells, n_encoder_genes)
+                self._encoder_gene_to_idx = {g: i for i, g in enumerate(enc_genes)}
+                self._encoder_gene_names = enc_genes
+                logger.info(
+                    f"Cell encoder matrix built: {self._encoder_expression_matrix.shape} "
+                    f"({len(enc_genes)} encoder genes)"
+                )
+
         self._is_setup = True
         logger.info(
             f"{type(self).__name__} ready: expression {self._expression_matrix.shape}, "
@@ -272,6 +322,26 @@ class BaseDataModule(ABC):
         self._check_setup()
         return self._gene_stds
 
+    @property
+    def encoder_gene_names(self) -> list[str] | None:
+        """Names of genes used as cell encoder input, or ``None`` if no encoder."""
+        self._check_setup()
+        return self._encoder_gene_names
+
+    @property
+    def encoder_gene_to_idx(self) -> dict[str, int] | None:
+        """Mapping from encoder gene name to column index, or ``None`` if no encoder."""
+        self._check_setup()
+        return self._encoder_gene_to_idx
+
+    @property
+    def n_encoder_genes(self) -> int | None:
+        """Number of encoder input genes, or ``None`` if no encoder."""
+        self._check_setup()
+        if self._encoder_gene_names is None:
+            return None
+        return len(self._encoder_gene_names)
+
     def get_gene_stats(self) -> dict[str, dict[str, float]]:
         """Return per-gene mean/std as a dictionary."""
         self._check_setup()
@@ -321,6 +391,9 @@ class BaseDataModule(ABC):
         }
         if include_aux_targets:
             kwargs["include_aux_targets"] = True
+        if self._encoder_expression_matrix is not None:
+            kwargs["encoder_expression_matrix"] = self._encoder_expression_matrix
+            kwargs["encoder_gene_to_idx"] = self._encoder_gene_to_idx
         return kwargs
 
     @abstractmethod

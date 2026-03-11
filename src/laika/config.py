@@ -60,6 +60,10 @@ class DataModuleConfig(ConfigBase):
     sequence_cache_onehot
         Cache one-hot arrays in RAM (only if ``sequence_cache_in_memory``
         is also True).
+    encoder_genes
+        Genes whose expression values are fed to the cell encoder.
+        ``None`` means "use all AnnData genes" when a cell encoder is
+        active; ignored when no cell encoder is configured.
     """
 
     gtf_path: str | Path
@@ -71,6 +75,7 @@ class DataModuleConfig(ConfigBase):
     max_stochastic_shift: int = 0
     sequence_cache_in_memory: bool = True
     sequence_cache_onehot: bool = True
+    encoder_genes: list[str] | None = None
 
 
 
@@ -128,6 +133,27 @@ class TrunkConfig(ConfigBase):
 
 
 @dataclass
+class CellEncoderConfig(ConfigBase):
+    """Configuration for the learnable cell encoder.
+
+    Parameters
+    ----------
+    encoder
+        Registry name of the encoder architecture (e.g. ``"transformer"``).
+    encoder_kwargs
+        Extra keyword arguments forwarded to the encoder constructor.
+    output_dim
+        Dimension of the produced cell embedding.  Must match the head's
+        ``spatial_emb_dim`` — when using :class:`CellEncoderConfig` the
+        Laika model sets ``spatial_emb_dim`` to this value automatically.
+    """
+
+    encoder: str = "transformer"
+    encoder_kwargs: dict[str, Any] = field(default_factory=dict)
+    output_dim: int = 64
+
+
+@dataclass
 class ModelConfig(ConfigBase):
     """Configuration for constructing the Laika model.
 
@@ -140,15 +166,20 @@ class ModelConfig(ConfigBase):
     head_kwargs
         Extra keyword arguments forwarded to the head constructor.
     spatial_emb_dim
-        Spatial embedding dimension. (``None`` infers from the data module)
+        Spatial embedding dimension. (``None`` infers from the data module;
+        overridden by ``cell_encoder.output_dim`` when a cell encoder is set)
     pool_factor
         Average-pooling factor applied to trunk output before the head.
+    cell_encoder
+        Cell encoder configuration.  ``None`` uses precomputed spatial
+        embeddings (default behaviour).
     """
 
     head: str = "mlp"
     head_kwargs: dict[str, Any] = field(default_factory=dict)
     spatial_emb_dim: int | None = None
     pool_factor: int = 8
+    cell_encoder: CellEncoderConfig | None = None
 
 
 @dataclass

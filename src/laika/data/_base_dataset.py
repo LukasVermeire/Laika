@@ -19,7 +19,8 @@ def collate_fn(batch: list[dict]) -> dict:
     """Stack batch items into tensors.
 
     Handles both ``trunk_emb`` (precomputed) and ``onehot`` (live-sequence) gene inputs,
-    and optional ``gene_mean_target``.
+    optional ``gene_mean_target``, and optional cell-encoder keys
+    (``expression_vectors``, ``gene_encoder_idx``).
     """
     result = {
         "cell_embs": torch.stack([item["cell_embs"] for item in batch]),
@@ -35,6 +36,14 @@ def collate_fn(batch: list[dict]) -> dict:
     if "gene_mean_target" in batch[0]:
         result["gene_mean_target"] = torch.stack(
             [item["gene_mean_target"] for item in batch]
+        )
+    # Cell encoder data (optional)
+    if "expression_vectors" in batch[0]:
+        result["expression_vectors"] = torch.stack(
+            [item["expression_vectors"] for item in batch]
+        )
+        result["gene_encoder_idx"] = torch.tensor(
+            [item["gene_encoder_idx"] for item in batch], dtype=torch.long
         )
     return result
 
@@ -78,6 +87,8 @@ class BaseDataset(Dataset):
         normalize_targets: bool = False,
         include_aux_targets: bool = False,
         gene_repeat_factor: int = 1,
+        encoder_expression_matrix: np.ndarray | None = None,
+        encoder_gene_to_idx: dict[str, int] | None = None,
     ):
         self.genes = genes
         self.expression_matrix = expression_matrix
@@ -90,6 +101,8 @@ class BaseDataset(Dataset):
         self.gene_stds = gene_stds    # (n_genes,) or None
         self.include_aux_targets = include_aux_targets
         self.gene_repeat_factor = gene_repeat_factor
+        self.encoder_expression_matrix = encoder_expression_matrix  # (n_cells, n_encoder_genes) or None
+        self.encoder_gene_to_idx = encoder_gene_to_idx or {}
         self._deterministic_seeds: list[int] | None = None
         if self.deterministic:
             self._deterministic_seeds = [
@@ -146,4 +159,10 @@ class BaseDataset(Dataset):
             item["gene_mean_target"] = torch.tensor(
                 self.expression_matrix[idx].mean(), dtype=torch.float32
             )
+        if self.encoder_expression_matrix is not None:
+            # Cell encoder data: expression vectors for the sampled cells
+            encoder_expr = self.encoder_expression_matrix[cell_indices].astype(np.float32)
+            item["expression_vectors"] = torch.from_numpy(encoder_expr)
+            # Index of this gene in the encoder vocabulary (-1 = not present, no masking)
+            item["gene_encoder_idx"] = self.encoder_gene_to_idx.get(gene, -1)
         return item

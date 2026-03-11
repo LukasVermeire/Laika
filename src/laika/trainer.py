@@ -398,7 +398,12 @@ class Trainer:
             trunk_emb = batch["trunk_emb"].to(self.device, non_blocking=True)
             cell_embs = batch["cell_embs"].to(self.device, non_blocking=True)
             targets = batch["targets"].to(self.device, non_blocking=True)
-            preds = self.model(trunk_emb, cell_embs)
+            expression_vectors = batch.get("expression_vectors")
+            gene_encoder_idx = batch.get("gene_encoder_idx")
+            if expression_vectors is not None:
+                expression_vectors = expression_vectors.to(self.device, non_blocking=True)
+                gene_encoder_idx = gene_encoder_idx.to(self.device, non_blocking=True)
+            preds = self.model(trunk_emb, cell_embs, expression_vectors, gene_encoder_idx)
             return preds, targets
 
         history = self._training_loop(
@@ -680,12 +685,17 @@ class Trainer:
             onehot = batch["onehot"].to(self.device, non_blocking=True)
             cell_embs = batch["cell_embs"].to(self.device, non_blocking=True)
             targets = batch["targets"].to(self.device, non_blocking=True)
+            expression_vectors = batch.get("expression_vectors")
+            gene_encoder_idx = batch.get("gene_encoder_idx")
+            if expression_vectors is not None:
+                expression_vectors = expression_vectors.to(self.device, non_blocking=True)
+                gene_encoder_idx = gene_encoder_idx.to(self.device, non_blocking=True)
             if requires_grad:
                 trunk_out = trunk_adapter.forward(onehot, training=training)
             else:
                 with torch.no_grad():
                     trunk_out = trunk_adapter.forward(onehot, training=False)
-            preds = self.model(trunk_out, cell_embs)
+            preds = self.model(trunk_out, cell_embs, expression_vectors, gene_encoder_idx)
             return preds, targets
         return forward_fn
 
