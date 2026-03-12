@@ -242,6 +242,8 @@ class BasePhaseConfig(ConfigBase):
         Run ``gc.collect()`` every N steps. (0 to disable)
     empty_cache_frequency_steps
         Run ``torch.cuda.empty_cache()`` every N steps. (0 to disable)
+    checkpoint_metric
+        Metric to determine best checkpoint. Either ``"loss"`` or ``"per_gene_pearson"``.
     """
     weight_decay: float = 0.0
     epochs: int = 50
@@ -266,6 +268,7 @@ class BasePhaseConfig(ConfigBase):
     gene_repeat_factor: int = 1
     gc_frequency_steps: int = 0
     empty_cache_frequency_steps: int = 0
+    checkpoint_metric: str = "loss"
 
     def __post_init__(self):
         if self.metrics_mode not in {"full", "fast"}:
@@ -282,6 +285,10 @@ class BasePhaseConfig(ConfigBase):
             )
         if self.gene_repeat_factor < 1:
             raise ValueError("gene_repeat_factor must be >= 1")
+        if self.checkpoint_metric not in {"loss", "per_gene_pearson"}:
+            raise ValueError(
+                f"checkpoint_metric must be 'loss' or 'per_gene_pearson', got {self.checkpoint_metric!r}"
+            )
         if self.gc_frequency_steps < 0:
             raise ValueError("gc_frequency_steps must be >= 0")
         if self.empty_cache_frequency_steps < 0:
