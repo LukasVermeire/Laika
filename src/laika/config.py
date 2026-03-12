@@ -173,6 +173,10 @@ class ModelConfig(ConfigBase):
     cell_encoder
         Cell encoder configuration.  ``None`` uses precomputed spatial
         embeddings (default behaviour).
+    cell_encoder_chunk_size
+        When set, the cell encoder processes cells in chunks of this size
+        during eval/inference. Has no effect during training (where ``cells_per_gene`` already
+        limits the batch size).
     """
 
     head: str = "mlp"
@@ -180,6 +184,7 @@ class ModelConfig(ConfigBase):
     spatial_emb_dim: int | None = None
     pool_factor: int = 8
     cell_encoder: CellEncoderConfig | None = None
+    cell_encoder_chunk_size: int | None = None
 
 
 @dataclass

@@ -143,6 +143,7 @@ def run_experiment(
         spatial_emb_dim=spatial_emb_dim,
         pool_factor=config.model.pool_factor,
         cell_encoder=cell_encoder,
+        cell_encoder_chunk_size=config.model.cell_encoder_chunk_size,
         **config.model.head_kwargs,
     )
 

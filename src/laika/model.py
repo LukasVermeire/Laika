@@ -45,6 +45,7 @@ class Laika(nn.Module):
         spatial_emb_dim: int = 64,
         pool_factor: int = 8,
         cell_encoder: BaseCellEncoder | None = None,
+        cell_encoder_chunk_size: int | None = None,
         **head_kwargs,
     ):
         super().__init__()
@@ -95,6 +96,7 @@ class Laika(nn.Module):
                     "correct output_dim before passing it to Laika."
                 )
         self.cell_encoder: BaseCellEncoder | None = cell_encoder
+        self._cell_encoder_chunk_size = cell_encoder_chunk_size
 
         n_params = sum(p.numel() for p in self.parameters())
         encoder_info = f", encoder={cell_encoder.name}" if cell_encoder is not None else ""
@@ -163,7 +165,16 @@ class Laika(nn.Module):
 
         # Encode expression vectors when a cell encoder is present
         if self.cell_encoder is not None and expression_vectors is not None:
-            cell_embs = self.cell_encoder(expression_vectors, gene_encoder_idx)
+            chunk_size = self._cell_encoder_chunk_size
+            if chunk_size is not None and not self.training:
+                # Chunk cells to avoid OOM on large cell populations during eval/inference
+                chunks = expression_vectors.split(chunk_size, dim=1)
+                cell_embs = torch.cat(
+                    [self.cell_encoder(chunk, gene_encoder_idx) for chunk in chunks],
+                    dim=1,
+                )
+            else:
+                cell_embs = self.cell_encoder(expression_vectors, gene_encoder_idx)
 
         if cell_embs.shape[2] != self._spatial_emb_dim:
             raise ValueError(
