@@ -323,6 +323,12 @@ class BaseDataModule(ABC):
         return self._gene_stds
 
     @property
+    def encoder_expression_matrix(self) -> np.ndarray | None:
+        """Cell encoder expression matrix ``(n_cells, n_encoder_genes)``, or ``None`` if no encoder."""
+        self._check_setup()
+        return self._encoder_expression_matrix
+
+    @property
     def encoder_gene_names(self) -> list[str] | None:
         """Names of genes used as cell encoder input, or ``None`` if no encoder."""
         self._check_setup()
