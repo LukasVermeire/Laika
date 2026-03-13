@@ -57,3 +57,4 @@ def list_cell_encoders() -> list[str]:
 
 # Auto-import concrete encoders so they self-register via the decorator.
 from .transformer import TransformerCellEncoder  # noqa: F401, E402
+from .mlp import MLPCellEncoder  # noqa: F401, E402
