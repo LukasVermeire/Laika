@@ -263,6 +263,8 @@ class Predictor:
         cell_indices: np.ndarray | None = None,
         cells_per_chunk: int = 8192,
         genes_per_chunk: int = 32,
+        expression_matrix: np.ndarray | None = None,
+        encoder_gene_to_idx: dict[str, int] | None = None,
     ) -> np.ndarray:
         """Predict expression.
 
@@ -271,26 +273,41 @@ class Predictor:
         genes
             List of genes.
         spatial_embeddings
-            Cell embeddings.
+            Cell embeddings ``(n_cells, emb_dim)``.  Used directly when no
+            cell encoder is active; otherwise only shapes inference.
         precomputed_embeddings
-            Dict mapping gene -> trunk embedding.
+            Dict mapping gene name → trunk embedding array.  Required for
+            head-only inference when no trunk is loaded.
         cell_indices
-            Subset of cell indices.
+            Subset of cell indices to predict for.  ``None`` uses all cells.
         cells_per_chunk
             Max cells processed per forward pass.
         genes_per_chunk
             Max genes processed per forward pass.
+        expression_matrix
+            ``(n_cells, n_encoder_genes)`` raw expression matrix for the cell
+            encoder.  Required when the model has a cell encoder.
+        encoder_gene_to_idx
+            Mapping from gene name to column index in ``expression_matrix``.
+            Required when ``expression_matrix`` is provided.
 
         Returns
         -------
         np.ndarray
-            Predicted expression.
+            Predicted expression ``(n_genes, n_cells)``.
         """
         if not self._is_finetune and precomputed_embeddings is None:
             raise ValueError(
                 "precomputed_embeddings is required for head-only inference "
                 "(no trunk was provided to the Predictor). "
                 "Load embeddings with laika.load_precomputed_embeddings()."
+            )
+
+        has_cell_encoder = self.model.cell_encoder is not None
+        if has_cell_encoder and expression_matrix is None:
+            raise ValueError(
+                "expression_matrix is required for inference when the model "
+                "has a cell encoder."
             )
 
         if cell_indices is None:
@@ -311,6 +328,10 @@ class Predictor:
             spatial_embeddings[cell_indices].astype(np.float32)
         )
 
+        enc_expr_all = None
+        if has_cell_encoder and expression_matrix is not None:
+            enc_expr_all = expression_matrix[cell_indices].astype(np.float32)
+
         with torch.no_grad():
             for g_start in range(0, n_genes, genes_per_chunk):
                 g_end = min(g_start + genes_per_chunk, n_genes)
@@ -325,8 +346,28 @@ class Predictor:
                     cell_chunk = spatial_all[c_start:c_end].to(self.device)
                     cell_chunk = cell_chunk.unsqueeze(0).expand(n_gene_chunk, -1, -1)
 
-                    preds = self.model(trunk_emb, cell_chunk)
+                    expression_vectors = None
+                    gene_encoder_idx_tensor = None
+                    if enc_expr_all is not None:
+                        enc_slice = enc_expr_all[c_start:c_end]  # (n_cells_chunk, n_enc_genes)
+                        # Expand to (n_gene_chunk, n_cells_chunk, n_enc_genes)
+                        expression_vectors = torch.from_numpy(enc_slice).to(self.device)
+                        expression_vectors = expression_vectors.unsqueeze(0).expand(
+                            n_gene_chunk, -1, -1
+                        )
+                        # Gene encoder indices for masking
+                        gene_encoder_idx_tensor = torch.tensor(
+                            [
+                                encoder_gene_to_idx.get(g, -1)
+                                for g in gene_chunk
+                            ],
+                            dtype=torch.long,
+                            device=self.device,
+                        )
 
+                    preds = self.model(
+                        trunk_emb, cell_chunk, expression_vectors, gene_encoder_idx_tensor
+                    )
                     predictions[g_start:g_end, c_start:c_end] = preds.cpu().numpy()
 
                 # Clean up trunk losses if using live trunk

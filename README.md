@@ -17,17 +17,21 @@ flowchart TD
     B --> C["sequence embedding"]
     C --> D["Head"]
     E["single-cell<br>spatial embedding"] --> D
+    EX["expression vector<br>(optional)"] --> ENC["CellEncoder<br>(optional)"] --> E
     D --> F["scalar prediction<br>(gene expression)"]
 
     classDef dna     fill:#4ade80,stroke:#16a34a,color:#000
     classDef trunk   fill:#60a5fa,stroke:#2563eb,color:#000
     classDef emb     fill:#c084fc,stroke:#9333ea,color:#000
     classDef head    fill:#fb923c,stroke:#ea580c,color:#000
+    classDef enc     fill:#fb923c,stroke:#ea580c,color:#000
     classDef out     fill:#f1f5f9,stroke:#94a3b8,color:#000
 
     class A dna
     class B trunk
     class C,E emb
+    class EX dna
+    class ENC enc
     class D head
     class F out
 ```
@@ -35,6 +39,7 @@ flowchart TD
 ## Overview
 
 - **Trunk**: Borzoi-based sequence encoder with optional LoRA fine-tuning
+- **Cell encoders**: Optional learnable encoders that map raw gene expression to cell embeddings, trained end-to-end — target gene is masked to prevent leakage
 - **Data**: Sequence-based and precomputed-embedding data pipelines
 - **Training**: Configurable experiment runner with custom losses and W&B logging
 - **Evaluation**: Per-gene correlation metrics and plots
@@ -43,14 +48,23 @@ flowchart TD
 
 Multiple architectures for spatial gene expression prediction. Details: [heads/README.md](src/laika/heads/README.md)
 
+## Cell Encoders
+
+Learnable alternatives to precomputed spatial embeddings. Details: [cell_encoders/README.md](src/laika/cell_encoders/README.md)
+
 ## Quick start
 
 Examples: [`/examples`](/examples/)
 
 ```python
 import laika
+from laika import CellEncoderConfig, ModelConfig
 
-# Full experiment from config
+# Precomputed spatial embeddings (default)
+result = laika.run_experiment(config)
+
+# Learnable cell encoder trained end-to-end
+config.model = ModelConfig(head="film", cell_encoder=CellEncoderConfig())
 result = laika.run_experiment(config)
 
 # Or components individually

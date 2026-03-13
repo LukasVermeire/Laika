@@ -37,6 +37,11 @@ from .data import (
 from .heads import get_head, list_heads, register_head
 from .heads.base import SpatialHead
 
+# Cell encoder registry
+from .cell_encoders import get_cell_encoder, list_cell_encoders, register_cell_encoder
+from .cell_encoders.base import BaseCellEncoder
+from .config import CellEncoderConfig
+
 # Evaluation
 from .eval import (
     EvalResults,

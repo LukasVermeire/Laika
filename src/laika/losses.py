@@ -9,7 +9,7 @@ import torch.nn as nn
 
 LOSS_REGISTRY: dict[str, Callable[[], nn.Module]] = {
     "mse": nn.MSELoss,
-    "poisson": lambda: nn.PoissonNLLLoss(log_input=False),
+    "poisson": lambda: nn.PoissonNLLLoss(log_input=True),
     "huber": nn.HuberLoss,
 }
 

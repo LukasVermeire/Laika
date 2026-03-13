@@ -398,7 +398,12 @@ class Trainer:
             trunk_emb = batch["trunk_emb"].to(self.device, non_blocking=True)
             cell_embs = batch["cell_embs"].to(self.device, non_blocking=True)
             targets = batch["targets"].to(self.device, non_blocking=True)
-            preds = self.model(trunk_emb, cell_embs)
+            expression_vectors = batch.get("expression_vectors")
+            gene_encoder_idx = batch.get("gene_encoder_idx")
+            if expression_vectors is not None:
+                expression_vectors = expression_vectors.to(self.device, non_blocking=True)
+                gene_encoder_idx = gene_encoder_idx.to(self.device, non_blocking=True)
+            preds = self.model(trunk_emb, cell_embs, expression_vectors, gene_encoder_idx)
             return preds, targets
 
         history = self._training_loop(
@@ -419,6 +424,7 @@ class Trainer:
             gc_frequency_steps=config.gc_frequency_steps,
             empty_cache_frequency_steps=config.empty_cache_frequency_steps,
             aux_gene_lambda=aux_gene_lambda,
+            checkpoint_metric=config.checkpoint_metric,
         )
 
         # Load best model
@@ -637,6 +643,7 @@ class Trainer:
             gc_frequency_steps=config.gc_frequency_steps,
             empty_cache_frequency_steps=config.empty_cache_frequency_steps,
             aux_gene_lambda=aux_gene_lambda,
+            checkpoint_metric=config.checkpoint_metric,
         )
 
         # Load best weights
@@ -680,12 +687,17 @@ class Trainer:
             onehot = batch["onehot"].to(self.device, non_blocking=True)
             cell_embs = batch["cell_embs"].to(self.device, non_blocking=True)
             targets = batch["targets"].to(self.device, non_blocking=True)
+            expression_vectors = batch.get("expression_vectors")
+            gene_encoder_idx = batch.get("gene_encoder_idx")
+            if expression_vectors is not None:
+                expression_vectors = expression_vectors.to(self.device, non_blocking=True)
+                gene_encoder_idx = gene_encoder_idx.to(self.device, non_blocking=True)
             if requires_grad:
                 trunk_out = trunk_adapter.forward(onehot, training=training)
             else:
                 with torch.no_grad():
                     trunk_out = trunk_adapter.forward(onehot, training=False)
-            preds = self.model(trunk_out, cell_embs)
+            preds = self.model(trunk_out, cell_embs, expression_vectors, gene_encoder_idx)
             return preds, targets
         return forward_fn
 
@@ -900,6 +912,7 @@ class Trainer:
         trunk_adapter: TrunkAdapter | None = None,
         trunk_checkpoint_path: Path | None = None,
         aux_gene_lambda: float = 0.0,
+        checkpoint_metric: str = "loss",
     ) -> dict[str, list]:
         """Shared training loop.
 
@@ -945,6 +958,8 @@ class Trainer:
             Path to save best trunk weights.
         aux_gene_lambda
             Weight for auxiliary per-gene mean loss.
+        checkpoint_metric
+            Metric to use for checkpointing and early stopping (``'loss'`` or ``'per_gene_pearson'``).
         """
         if forward_fn_eval is None:
             forward_fn_eval = forward_fn
@@ -970,7 +985,14 @@ class Trainer:
         else:
             history["lr"] = []
 
-        best_val_loss = float("inf")
+        if checkpoint_metric == "loss":
+            best_val_score = float("inf")
+            def _is_better(score): return score < best_val_score
+            def _get_score(results): return results["loss"]
+        else:  # per_gene_pearson
+            best_val_score = float("-inf")
+            def _is_better(score): return score > best_val_score
+            def _get_score(results): return results["per_gene_pearson_r"]
         patience_counter = 0
         epochs_trained = 0
 
@@ -1050,15 +1072,16 @@ class Trainer:
                 is_finetune=is_finetune,
             )
 
-            if val_results["loss"] < best_val_loss:
-                best_val_loss = val_results["loss"]
+            score = _get_score(val_results)
+            if _is_better(score):
+                best_val_score = score
                 patience_counter = 0
                 self.model.save(checkpoint_path)
                 if trunk_adapter is not None and trunk_checkpoint_path is not None:
                     trunk_adapter.save_weights(str(trunk_checkpoint_path))
                 pbar.write(
                     f"  Epoch {epoch + 1}: New best model "
-                    f"(val_loss={best_val_loss:.4f})"
+                    f"({checkpoint_metric}={best_val_score:.4f})"
                 )
             else:
                 patience_counter += 1
@@ -1073,7 +1096,7 @@ class Trainer:
         pbar.close()
 
         logger.info(
-            f"{phase_desc} complete. Best val_loss={best_val_loss:.4f} "
+            f"{phase_desc} complete. Best {checkpoint_metric}={best_val_score:.4f} "
             f"(trained {epochs_trained} epochs)"
         )
         return history

@@ -76,6 +76,8 @@ def evaluate(
     cell_indices: np.ndarray | None = None,
     cells_per_chunk: int = 1024,
     genes_per_chunk: int = 1,
+    encoder_expression_matrix: np.ndarray | None = None,
+    encoder_gene_to_idx: dict[str, int] | None = None,
 ) -> EvalResults:
     """Run evaluation.
 
@@ -97,6 +99,11 @@ def evaluate(
         Max cells per forward pass.
     genes_per_chunk
         Max genes per forward pass.
+    encoder_expression_matrix
+        Expression matrix for the cell encoder ``(n_cells, n_encoder_genes)``.
+        Required when the model has a cell encoder.
+    encoder_gene_to_idx
+        Mapping from encoder gene name to column index in ``encoder_expression_matrix``.
 
     Returns
     -------
@@ -112,6 +119,8 @@ def evaluate(
         cell_indices=cell_indices,
         cells_per_chunk=cells_per_chunk,
         genes_per_chunk=genes_per_chunk,
+        expression_matrix=encoder_expression_matrix,
+        encoder_gene_to_idx=encoder_gene_to_idx,
     )
 
     y_true = expression_matrix

@@ -51,6 +51,8 @@ class SequenceCentricDataset(BaseDataset):
         normalize_targets: bool = False,
         include_aux_targets: bool = False,
         gene_repeat_factor: int = 1,
+        encoder_expression_matrix: np.ndarray | None = None,
+        encoder_gene_to_idx: dict[str, int] | None = None,
     ):
         super().__init__(
             genes=genes,
@@ -63,6 +65,8 @@ class SequenceCentricDataset(BaseDataset):
             normalize_targets=normalize_targets,
             include_aux_targets=include_aux_targets,
             gene_repeat_factor=gene_repeat_factor,
+            encoder_expression_matrix=encoder_expression_matrix,
+            encoder_gene_to_idx=encoder_gene_to_idx,
         )
         self.sequence_cache = sequence_cache
 
